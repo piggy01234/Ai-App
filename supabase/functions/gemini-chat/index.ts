@@ -35,7 +35,7 @@ Deno.serve(async (req: Request) => {
   // 2. Validate the request.
   let body: any;
   try { body = await req.json(); } catch { return json({ error: "Bad request.", code: "bad" }, 400); }
-  const { model, messages, system, thinking, temperature } = body || {};
+  const { model, messages, system, thinking, temperature, thinkingLevel } = body || {};
   if (!FREE_MODELS.includes(model)) {
     return json({ error: "This model needs your own API key.", code: "model" }, 403);
   }
@@ -73,19 +73,27 @@ Deno.serve(async (req: Request) => {
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
   }));
-  const attempts = [{ thoughts: !!thinking, cap: true }];
-  if (thinking) attempts.push({ thoughts: false, cap: true });
-  attempts.push({ thoughts: false, cap: false });
+  // Lower thinking levels answer much faster. Flash-Lite is already fast by default, so leave it alone.
+  let level: string | null = ["low", "medium", "high"].includes(thinkingLevel) ? thinkingLevel : null;
+  if (level === "low" && /flash-lite/.test(model)) level = null;
+  const attempts: { level: string | null; thoughts: boolean; cap: boolean }[] = [];
+  if (level) attempts.push({ level, thoughts: !!thinking, cap: true });
+  attempts.push({ level: null, thoughts: !!thinking, cap: true });
+  if (thinking) attempts.push({ level: null, thoughts: false, cap: true });
+  attempts.push({ level: null, thoughts: false, cap: false });
 
   let upstream: Response | null = null;
   for (let i = 0; i < attempts.length; i++) {
-    const { thoughts, cap } = attempts[i];
+    const { level: lv, thoughts, cap } = attempts[i];
     const generationConfig: Record<string, unknown> = {};
     if (typeof temperature === "number" && temperature !== 1) {
       generationConfig.temperature = Math.min(Math.max(temperature, 0), 1);
     }
     if (cap) generationConfig.maxOutputTokens = MAX_OUTPUT_TOKENS;
-    if (thoughts) generationConfig.thinkingConfig = { includeThoughts: true };
+    const tc: Record<string, unknown> = {};
+    if (lv) tc.thinkingLevel = lv;
+    if (thoughts) tc.includeThoughts = true;
+    if (Object.keys(tc).length) generationConfig.thinkingConfig = tc;
     const payload: Record<string, unknown> = { contents, generationConfig };
     if (typeof system === "string" && system.trim()) {
       payload.systemInstruction = { parts: [{ text: system.slice(0, 4000) }] };
@@ -98,7 +106,7 @@ Deno.serve(async (req: Request) => {
     const text = await r.text();
     let msg = text;
     try { msg = JSON.parse(text)?.error?.message || text; } catch { /* keep raw text */ }
-    if (r.status === 400 && i < attempts.length - 1 && /thinking|thought|output.?token/i.test(msg)) continue;
+    if (r.status === 400 && i < attempts.length - 1 && /thinking|thought|level|output.?token/i.test(msg)) continue;
     if (r.status === 429) {
       return json({
         error: "The shared free key is busy right now. Try again in a moment, or add your own Gemini key.",

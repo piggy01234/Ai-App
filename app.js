@@ -28,7 +28,7 @@ const defaults = {
   provider: 'claude',
   keys: { claude: '', gemini: '' },
   models: { claude: MODELS.claude[0], gemini: MODELS.gemini[0] },
-  system: '', temperature: 1, maxTokens: 16384, theme: 'light', thinking: true, preferOwnKey: false
+  system: '', temperature: 1, maxTokens: 16384, theme: 'light', thinking: true, preferOwnKey: false, effort: 'low'
 };
 const saved = store.get('settings', {});
 const settings = { ...defaults, ...saved,
@@ -51,7 +51,8 @@ let currentId = store.get('currentId', null);
 let abort = null;
 let lastError = null;
 let lastErrAction = null;
-function setError(text, action) { lastError = text; lastErrAction = action || null; }
+let lastErrNeutral = false;
+function setError(text, action, neutral) { lastError = text; lastErrAction = action || null; lastErrNeutral = !!neutral; }
 
 const saveSettings = () => store.set('settings', settings);
 const saveChats = () => { store.set('chats', chats); store.set('currentId', currentId); };
@@ -69,19 +70,39 @@ function renderMarkdown(text) {
   if (!window.marked || !window.DOMPurify) return null;
   return DOMPurify.sanitize(marked.parse(text, { breaks: true }));
 }
+const THINK_PHRASES = ['Reading your message', 'Thinking it through', 'Working out an answer', 'Putting a reply together'];
+function lastHeading(t) { // Gemini's thought summaries use **Bold headings**; show the newest one as the live status
+  let h = null, x; const re = /\*\*([^*\n]{3,90})\*\*/g;
+  while ((x = re.exec(t))) h = x[1].trim();
+  return h;
+}
+function thinkLabel(m, waiting, secs) {
+  if (waiting) return (m.thinking && lastHeading(m.thinking)) || THINK_PHRASES[Math.floor(secs / 4) % THINK_PHRASES.length] + '…';
+  if (m.provider === 'gemini') return 'Show thinking';
+  return m.thinkMs ? `Thought for ${Math.max(1, Math.round(m.thinkMs / 1000))}s` : 'Thought process';
+}
 function fillBody(body, m, streaming) {
   if (m.role === 'user') { body.textContent = m.content; return; }
   body.innerHTML = '';
   const waiting = streaming && !m.content;
-  if (m.thinking) {
-    const d = el('details', 'think');
-    d.open = m.thinkOpen != null ? m.thinkOpen : waiting;
-    const sum = el('summary', waiting ? 'shimmer' : '', waiting ? 'Thinking…' : (m.provider === 'gemini' ? 'Show thinking' : 'Thought process'));
-    sum.onclick = () => { m.thinkOpen = !d.open; };
-    d.append(sum, el('div', 'think-body', m.thinking));
+  const secs = m.startedAt ? Math.floor((Date.now() - m.startedAt) / 1000) : 0;
+  if (waiting || m.thinking) {
+    const expandable = !!m.thinking;
+    const d = el(expandable ? 'details' : 'div', 'think' + (expandable ? '' : ' plain'));
+    if (expandable) d.open = !!m.thinkOpen;
+    const sum = el(expandable ? 'summary' : 'div', 'think-sum');
+    sum.append(el('span', waiting ? 'shimmer' : '', thinkLabel(m, waiting, secs)));
+    if (waiting && secs >= 2) sum.append(el('span', 'think-time', secs + 's'));
+    if (expandable) sum.onclick = () => { m.thinkOpen = !d.open; };
+    d.append(sum);
+    if (expandable) {
+      const tb = el('div', 'think-body'); const th = renderMarkdown(m.thinking);
+      if (th == null) { tb.textContent = m.thinking; tb.style.whiteSpace = 'pre-wrap'; } else tb.innerHTML = th;
+      d.append(tb);
+      if (waiting) requestAnimationFrame(() => { tb.scrollTop = tb.scrollHeight; });
+    }
     body.append(d);
-  } else if (waiting) {
-    body.append(el('div', 'shimmer wait', 'Thinking…'));
+    if (waiting && secs >= 20) body.append(el('div', 'think-hint', 'This is taking a while. You can press Stop, turn Thinking off, or lower the thinking effort in Settings.'));
   }
   if (m.content) {
     const ans = el('div', 'answer');
@@ -124,6 +145,7 @@ function messageEl(m, i, isLast, streaming) {
   const wrap = el('div', 'msg ' + m.role + (m.provider ? ' by-' + m.provider : ''));
   if (m.role === 'assistant') { const av = el('span', 'avatar' + (streaming ? ' busy' : '')); av.innerHTML = SPARK; wrap.append(av); }
   const body = el('div', 'body'); fillBody(body, m, streaming); wrap.append(body);
+  if (m.stopped && !streaming) wrap.append(el('div', 'stopped', 'You stopped this response'));
   if (m.role === 'assistant' && !streaming) {
     const a = el('div', 'actions');
     const cp = iconBtn(ICON.copy, 'Copy');
@@ -154,7 +176,7 @@ function renderMessages(streamingLast) {
     c.messages.forEach((m, i) => box.append(messageEl(m, i, i === c.messages.length - 1, streamingLast && i === c.messages.length - 1)));
   }
   if (lastError) {
-    const e = el('div', 'err'); e.append(el('span', null, lastError));
+    const e = el('div', 'err' + (lastErrNeutral ? ' neutral' : '')); e.append(el('span', null, lastError));
     if (lastErrAction) { const act = lastErrAction; const ab = el('button', 'ghost', act.label); ab.onclick = () => act.fn(); e.append(ab); }
     if (c && c.messages.length && c.messages[c.messages.length - 1].role === 'user') {
       const r = el('button', 'ghost', 'Retry'); r.onclick = () => { lastError = null; generate(); }; e.append(r);
@@ -273,16 +295,17 @@ async function generate() {
   if (route.kind === 'none') { setError(route.message, route.action); renderMessages(); return; }
   let kind = route.kind; // 'free' = your daily tokens via the server, 'own' = their own API key
   const history = c.messages.map(m => ({ role: m.role, content: m.content }));
-  const msg = { role: 'assistant', content: '', provider: p, model };
+  const msg = { role: 'assistant', content: '', provider: p, model, startedAt: Date.now() };
   if (kind === 'free') msg.free = true;
   c.messages.push(msg);
   abort = new AbortController(); setBusy(true); renderMessages(true);
+  const tick = setInterval(() => { if (!msg.content) scheduleStreamRender(); }, 1000); // keeps the status text and timer moving
   const opts = { model, system: settings.system.trim(), messages: history,
     temperature: settings.temperature, maxTokens: settings.maxTokens,
-    signal: abort.signal, thinking: settings.thinking,
+    signal: abort.signal, thinking: settings.thinking, effort: settings.thinking ? settings.effort : 'low',
     onStop: r => { if (!/^(STOP|end_turn|stop_sequence|FINISH_REASON_UNSPECIFIED)$/.test(String(r))) msg.cut = String(r); },
     onThought: t => { msg.thinking = (msg.thinking || '') + t; scheduleStreamRender(); },
-    onChunk: t => { msg.content += t; scheduleStreamRender(); } };
+    onChunk: t => { if (!msg.content) msg.thinkMs = Date.now() - msg.startedAt; msg.content += t; scheduleStreamRender(); } };
   const run = k => p === 'claude' ? streamClaude({ ...opts, key: settings.keys.claude })
     : k === 'free' ? streamGeminiFree(opts) : streamGemini({ ...opts, key: settings.keys.gemini });
   try {
@@ -296,6 +319,7 @@ async function generate() {
       } else throw e;
     }
   } catch (e) {
+    if (e.name === 'AbortError') msg.stopped = true;
     if (e.name !== 'AbortError') {
       if (e.code === 'quota') {
         if (account.quota) account.quota.remaining = 0;
@@ -305,7 +329,8 @@ async function generate() {
       else setError(e.message || String(e));
     }
   } finally {
-    if (!msg.content) c.messages.pop();
+    clearInterval(tick);
+    if (!msg.content) { c.messages.pop(); if (msg.stopped) setError('You stopped this response.', null, true); }
     abort = null; setBusy(false); c.updated = Date.now(); saveChats(); renderAll();
     if (account.user) refreshQuota();
   }
@@ -365,18 +390,27 @@ async function streamClaude({ key, model, system, messages, temperature, maxToke
   }
   throw new Error(lastErr || 'Request failed');
 }
-async function streamGemini({ key, model, system, messages, temperature, thinking, signal, onChunk, onThought, onStop }) {
+function geminiLevel(model, effort) {
+  let l = ['low', 'medium', 'high'].includes(effort) ? effort : null;
+  if (l === 'low' && /flash-lite/i.test(model)) l = null; // Flash-Lite is already fast by default
+  return l;
+}
+async function streamGemini({ key, model, system, messages, temperature, thinking, effort, signal, onChunk, onThought, onStop }) {
   // try the richest request first; if the model rejects an option, step down
-  const attempts = [{ thoughts: !!thinking, cap: true }];
-  if (thinking) attempts.push({ thoughts: false, cap: true });
-  attempts.push({ thoughts: false, cap: false });
+  const level = geminiLevel(model, effort);
+  const attempts = [];
+  if (level) attempts.push({ level, thoughts: !!thinking, cap: true });
+  attempts.push({ level: null, thoughts: !!thinking, cap: true });
+  if (thinking) attempts.push({ level: null, thoughts: false, cap: true });
+  attempts.push({ level: null, thoughts: false, cap: false });
   let lastErr;
   for (let i = 0; i < attempts.length; i++) {
-    const { thoughts, cap } = attempts[i];
+    const { level: lv, thoughts, cap } = attempts[i];
     const generationConfig = {};
     if (temperature !== 1) generationConfig.temperature = temperature;
     if (cap) generationConfig.maxOutputTokens = 65536; // explicit high cap so replies aren't cut at a default limit
-    if (thoughts) generationConfig.thinkingConfig = { includeThoughts: true };
+    const tc = {}; if (lv) tc.thinkingLevel = lv; if (thoughts) tc.includeThoughts = true;
+    if (Object.keys(tc).length) generationConfig.thinkingConfig = tc;
     const body = {
       contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
       generationConfig
@@ -389,7 +423,7 @@ async function streamGemini({ key, model, system, messages, temperature, thinkin
     });
     if (!res.ok) {
       const msg = await errText(res);
-      if (i < attempts.length - 1 && res.status === 400 && /thinking|thought|output.?token/i.test(String(msg))) { lastErr = msg; continue; }
+      if (i < attempts.length - 1 && res.status === 400 && /thinking|thought|level|output.?token/i.test(String(msg))) { lastErr = msg; continue; }
       throw new Error(msg);
     }
     let finished = false;
@@ -407,15 +441,14 @@ async function streamGemini({ key, model, system, messages, temperature, thinkin
   }
   throw new Error(lastErr || 'Request failed');
 }
-
-async function streamGeminiFree({ model, system, messages, temperature, thinking, signal, onChunk, onThought, onStop }) {
+async function streamGeminiFree({ model, system, messages, temperature, thinking, effort, signal, onChunk, onThought, onStop }) {
   const { data } = await sb.auth.getSession();
   const token = data && data.session && data.session.access_token;
   if (!token) { const e = new Error('Please sign in again.'); e.code = 'auth'; throw e; }
   const res = await fetch(`${APP.SUPABASE_URL}/functions/v1/${APP.FUNCTION_NAME}`, {
     method: 'POST', signal,
     headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + token, 'apikey': APP.SUPABASE_ANON_KEY },
-    body: JSON.stringify({ model, system, messages, temperature, thinking })
+    body: JSON.stringify({ model, system, messages, temperature, thinking, thinkingLevel: effort })
   });
   if (!res.ok) {
     let j = {}; try { j = await res.json(); } catch {}
@@ -438,14 +471,14 @@ async function streamGeminiFree({ model, system, messages, temperature, thinking
 function openModal() {
   $('#keyClaude').value = settings.keys.claude; $('#keyGemini').value = settings.keys.gemini;
   $('#system').value = settings.system; $('#temp').value = settings.temperature; $('#tempVal').textContent = settings.temperature;
-  $('#maxTokens').value = settings.maxTokens; $('#theme').value = settings.theme;
+  $('#maxTokens').value = settings.maxTokens; $('#theme').value = settings.theme; $('#effort').value = settings.effort || 'low';
   $('#preferOwn').checked = !!settings.preferOwnKey; $('#preferOwnWrap').classList.toggle('hidden', !accountsEnabled);
   $('#modal').classList.remove('hidden');
 }
 function closeModal() {
   settings.keys.claude = $('#keyClaude').value.trim(); settings.keys.gemini = $('#keyGemini').value.trim();
   settings.system = $('#system').value; settings.temperature = parseFloat($('#temp').value);
-  settings.maxTokens = Math.max(256, parseInt($('#maxTokens').value) || 4096); settings.theme = $('#theme').value; settings.preferOwnKey = $('#preferOwn').checked;
+  settings.maxTokens = Math.max(256, parseInt($('#maxTokens').value) || 4096); settings.theme = $('#theme').value; settings.effort = $('#effort').value; settings.preferOwnKey = $('#preferOwn').checked;
   saveSettings(); $('#modal').classList.add('hidden'); renderAll();
 }
 

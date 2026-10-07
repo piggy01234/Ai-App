@@ -226,3 +226,19 @@ input:focus,textarea:focus,select:focus{outline:2px solid color-mix(in srgb,var(
 
 .menu{min-width:310px}
 .menu-item>span:first-child{white-space:nowrap}
+
+/* thinking header v2 + stopped note */
+.think-sum{font:500 13.5px var(--sans);color:var(--muted);display:flex;align-items:center;gap:0;user-select:none}
+.think summary.think-sum{cursor:pointer;list-style:none;display:flex}
+.think summary.think-sum:hover{color:var(--text)}
+.think.plain{border-left-color:transparent;padding-left:0}
+.think-time{margin-left:8px;font-weight:400;font-size:12.5px;font-variant-numeric:tabular-nums;opacity:.8}
+.think-hint{margin:-4px 0 12px 14px;font:400 13px var(--sans);color:var(--muted)}
+.think-sum .shimmer{font-weight:500}
+.stopped{margin-top:8px;font:italic 400 13.5px var(--sans);color:var(--muted)}
+.err.neutral{border-color:var(--border);background:var(--side);color:var(--muted)}
+
+.think-body{white-space:normal}
+.think-body p{margin:.45em 0}.think-body p:first-child{margin-top:0}.think-body p:last-child{margin-bottom:0}
+.think-body strong{color:var(--text);font-weight:600}
+.think-body ul,.think-body ol{padding-left:1.2em}
