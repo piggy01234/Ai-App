@@ -505,7 +505,13 @@ $('#wipe').onclick = () => {
 };
 /* ---------- accounts + free daily tokens (optional, needs Supabase) ---------- */
 const APP = Object.assign({ SUPABASE_URL: '', SUPABASE_ANON_KEY: '', FUNCTION_NAME: 'gemini-chat', FREE_MODELS: [] }, window.APP_CONFIG || {});
-const accountsEnabled = !!(APP.SUPABASE_URL && APP.SUPABASE_ANON_KEY && window.supabase);
+APP.SUPABASE_URL = String(APP.SUPABASE_URL || '').trim().replace(/\/+$/, '');
+APP.SUPABASE_ANON_KEY = String(APP.SUPABASE_ANON_KEY || '').trim();
+const cfgSet = !!(APP.SUPABASE_URL && APP.SUPABASE_ANON_KEY);
+const debugOn = /[?&]debug\b/.test(location.search);
+const accountsEnabled = !!(cfgSet && window.supabase);
+if (!cfgSet) console.info('Accounts are off: fill in SUPABASE_URL and SUPABASE_ANON_KEY in config.js');
+else if (!window.supabase) console.error('Accounts are off: the Supabase library did not load (blocked network or ad blocker?)');
 const sb = accountsEnabled ? window.supabase.createClient(APP.SUPABASE_URL, APP.SUPABASE_ANON_KEY) : null;
 const account = { user: null, quota: null };
 let authMode = 'signin';
@@ -549,8 +555,15 @@ async function setUser(u) {
 }
 function renderAccount() {
   const box = $('#account'); if (!box) return;
-  box.classList.toggle('hidden', !accountsEnabled); box.innerHTML = '';
-  if (!accountsEnabled) return;
+  box.classList.toggle('hidden', !accountsEnabled && !debugOn && !cfgSet); box.innerHTML = '';
+  if (debugOn) {
+    const tick = v => v ? 'yes' : 'NO';
+    box.append(el('div', 'acct-note', `Debug: config.js read: ${tick(window.APP_CONFIG)} · URL set: ${tick(APP.SUPABASE_URL)} · key set: ${tick(APP.SUPABASE_ANON_KEY)} · library loaded: ${tick(window.supabase)} · accounts on: ${tick(accountsEnabled)}`));
+  }
+  if (!accountsEnabled) {
+    if (cfgSet) box.append(el('p', 'acct-note', "Sign-in is set up, but its library couldn't load. Check your connection or ad blocker, then refresh."));
+    return;
+  }
   if (!account.user) {
     const b = el('button', 'sidebtn'); b.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg> Sign in for free tokens';
     b.onclick = () => openAuth('signin');
