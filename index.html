@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:wght@400;500;600&display=swap" rel="stylesheet">
+<script>try{var _s=JSON.parse(localStorage.getItem("settings")||"{}");document.documentElement.dataset.brand=_s.provider||"claude";if(_s.theme)document.documentElement.dataset.theme=_s.theme}catch(e){}</script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="gemgrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4285f4"/><stop offset=".5" stop-color="#9b72cb"/><stop offset="1" stop-color="#d96570"/></linearGradient></defs></svg>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">Chat</div>
+    <button class="newchat" id="newChat">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> New chat
+    </button>
+    <div class="list-label">Recents</div>
+    <div class="chat-list" id="chatList"></div>
+    <div class="side-foot">
+      <div id="account" class="account hidden"></div>
+      <button class="sidebtn" id="exportChat"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg> Export chat</button>
+      <button class="sidebtn" id="openSettings2"><svg viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg> Settings</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="iconbtn" id="menuBtn" aria-label="Toggle sidebar" title="Sidebar"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      <span class="spacer"></span>
+      <span class="keystate" id="keyState"></span>
+      <button class="iconbtn" id="openSettings" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg></button>
+    </header>
+
+    <div class="messages" id="messages"></div>
+
+    <div class="composer">
+      <div class="box">
+        <textarea id="input" rows="1" placeholder="Message…"></textarea>
+        <div class="tools">
+          <button class="toggle on" id="thinkBtn" title="Show the model's thinking" aria-pressed="true">
+            <svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg> Thinking
+          </button>
+          <span class="spacer"></span>
+          <div class="picker">
+            <button class="modelbtn" id="modelBtn" aria-haspopup="true" title="Switch model"><span id="modelLabel"></span><svg viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M6 9l6 6 6-6"/></svg></button>
+            <div class="menu hidden" id="modelMenu"></div>
+          </div>
+          <button class="send" id="send" title="Send" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+          <button class="send hidden" id="stop" title="Stop" aria-label="Stop"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none"/></svg></button>
+        </div>
+      </div>
+      <p class="hint">Enter to send · Shift + Enter for a new line</p>
+    </div>
+  </main>
+</div>
+
+<div class="modal hidden" id="modal">
+  <div class="card">
+    <div class="card-head"><h2>Settings</h2></div>
+    <p class="note">Keys are saved only in this browser and sent only to Anthropic or Google. Never type a key into a copy of this page that other people use.</p>
+
+    <label>Anthropic API key
+      <input id="keyClaude" type="password" placeholder="sk-ant-…" autocomplete="off">
+    </label>
+    <label>Google Gemini API key
+      <input id="keyGemini" type="password" placeholder="AIza…" autocomplete="off">
+    </label>
+    <label class="check hidden" id="preferOwnWrap"><input type="checkbox" id="preferOwn"><span>Use my own Gemini key instead of the free tokens (keeps my chats off Google's free tier)</span></label>
+    <label>System prompt
+      <textarea id="system" rows="3" placeholder="Optional. e.g. You are a patient study buddy."></textarea>
+    </label>
+    <div class="row">
+      <label>Temperature <b id="tempVal">1</b>
+        <input id="temp" type="range" min="0" max="1" step="0.1">
+      </label>
+      <label>Max output tokens (Claude)
+        <input id="maxTokens" type="number" min="256" max="64000" step="256">
+      </label>
+      <label>Theme
+        <select id="theme"><option value="light">Light</option><option value="dark">Dark</option></select>
+      </label>
+    </div>
+    <div class="row end">
+      <button class="dangerlink" id="wipe">Delete all chats &amp; keys</button>
+      <span class="spacer"></span>
+      <button class="primary" id="closeSettings">Done</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal hidden" id="authModal">
+  <div class="card">
+    <div class="card-head"><h2>Free daily tokens</h2></div>
+    <div class="tabs"><button class="tab on" id="tabIn">Sign in</button><button class="tab" id="tabUp">Create account</button></div>
+    <p class="note" id="authNote"></p>
+    <label>Email <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com"></label>
+    <label>Password <input id="authPass" type="password" autocomplete="current-password" placeholder="At least 8 characters"></label>
+    <p class="authmsg hidden" id="authMsg"></p>
+    <p class="note">Chats that use free tokens go through Google's free Gemini tier, which may use them to improve Google products. Prefer privacy? Use your own key instead.</p>
+    <div class="row end"><button class="linkbtn" id="authCancel">Close</button><span class="spacer"></span><button class="primary" id="authSubmit">Sign in</button></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
